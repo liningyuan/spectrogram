@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Spectrogram Visualizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 20px;
+        }
+        #spectrogramContainer {
+            width: 90%;
+            height: 100%;
+            overflow-x: scroll;
+            border: 1px solid #000;
+            margin-top: 20px;
+            position: relative;
+        }
+        canvas {
+            display: block;
+        }
+        #info {
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        #controls {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Audio Spectrogram Visualizer</h1>
+    <input type="file" id="audioFile" accept="audio/*">
+    <audio id="audioPlayer" controls></audio>
+    <div id="spectrogramContainer">
+        <canvas id="spectrogramCanvas" width="2000" height="700"></canvas>
+    </div>
+    <div id="controls">
+        <label for="minFreq">Min Frequency (Hz): </label>
+        <input type="number" id="minFreq" value="0" min="0">
+        <label for="maxFreq">Max Frequency (Hz): </label>
+        <input type="number" id="maxFreq" value="20000" min="0">
+    </div>
+    <div id="info">Hover over the spectrogram to see time and frequency.</div>
+
+    <script>
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const audioElement = document.getElementById('audioPlayer');
+        const canvas = document.getElementById('spectrogramCanvas');
+        const canvasCtx = canvas.getContext('2d');
+        const container = document.getElementById('spectrogramContainer');
+        const infoDiv = document.getElementById('info');
+        const minFreqInput = document.getElementById('minFreq');
+        const maxFreqInput = document.getElementById('maxFreq');
+        
+        let source=null;
+        let analyser = audioContext.createAnalyser();
+        let dataArray = new Float32Array(analyser.frequencyBinCount);
+        let offscreenCanvas = document.createElement('canvas');
+        let offscreenCtx = offscreenCanvas.getContext('2d');
+        
+        // 初始化画布
+        let canvasWidth = 1000;
+        let canvasHeight = 700;
+        let pixelsPerSecond = 60; // 每1秒30像素
+        let isInitialized = false;
+        let minFreq = 0;
+        let maxFreq = 20000;
+
+        // 选择功能相关变量
+        let isDragging = false;
+        let selectionStartX = 0; // 选择区间的起始位置
+        let selectionEndX = 0;   // 选择区间的结束位置
+        let selectedTime = 0;    // 选择的时间点
+        let isRangeSelected = false; // 是否选择了区间
+
+        // 文件上传处理
+        document.getElementById('audioFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            if(!source){
+                source = audioContext.createMediaElementSource(audioElement);
+                source.connect(analyser);
+                analyser.connect(audioContext.destination);
+            }
+            
+            audioElement.src = URL.createObjectURL(file);
+            analyser.fftSize = 4096;
+            analyser.smoothingTimeConstant=0.1;
+            dataArray = new Float32Array(analyser.frequencyBinCount);
+
+            // 初始化画布尺寸
+            audioElement.addEventListener('loadedmetadata', function() {
+                const duration = audioElement.duration;
+                canvasWidth = Math.ceil(duration * pixelsPerSecond);
+                canvas.width = canvasWidth;
+                canvas.height = canvasHeight;
+                offscreenCanvas.width = canvasWidth;
+                offscreenCanvas.height = canvasHeight;
+                offscreenCtx.fillStyle = 'rgb(200, 200, 200)';
+                offscreenCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+                isInitialized = true;
+
+                // 初始化选择时间点为开头
+                selectedTime = 0;
+                isRangeSelected = false;
+                canvas.focus();
+            });
+        });
+
+        // 更新频率范围
+        function updateFrequencyRange() {
+            minFreq = parseFloat(minFreqInput.value);
+            maxFreq = parseFloat(maxFreqInput.value);
+            if (minFreq <= maxFreq) {
+                controls.style.setProperty("border","#0f0 2px solid");
+            } else {
+                controls.style.setProperty("border","#F00 2px solid");
+                return;
+            }
+        }
+
+        minFreqInput.addEventListener('change', updateFrequencyRange);
+        maxFreqInput.addEventListener('change', updateFrequencyRange);
+        updateFrequencyRange();
+        
+        let mouseX = 0;
+        let mouseY = 0;
+
+        // 高效绘制时频图
+        function draw() {
+            requestAnimationFrame(draw);
+            const duration = audioElement.duration;
+            const currentTime = audioElement.currentTime;
+            // const currentX = Math.floor(currentTime * pixelsPerSecond);
+            const currentX = (currentTime * pixelsPerSecond);
+            
+        if (isInitialized &&!(audioElement.paused)){
+
+            // 获取频谱数据
+            analyser.getFloatFrequencyData(dataArray);
+            // dataArray2 = new Uint8Array(analyser.frequencyBinCount);
+            // analyser.getByteFrequencyData(dataArray2);
+            // offscreenCtx.fillStyle = `hsl(0, 100%, 50%)`;
+            // offscreenCtx.fillRect(currentX, 0, 2, canvasHeight);
+
+            let sum=1.0;
+            for(let i=0;i<dataArray.length;++i)sum+=(2**(dataArray[i]/10))*256;
+            sum/=dataArray.length;
+            // sum*=2;
+
+
+            // 绘制频谱到离屏canvas
+            for (let y = 0; y < canvasHeight; y++) {
+                const freq = minFreq + (maxFreq - minFreq) * (1 - y / canvasHeight);
+                const binIndex = Math.floor((freq / (audioContext.sampleRate / 2)) * dataArray.length);
+                let value = Math.max(dataArray[binIndex],-140);
+                let value1=(value-(-100))/(-20-(-100))*256;
+                let value2=(2**(value/10))*256;
+                let hue = (value1 / 256) * 300; // 使用HSL颜色空间
+                hue=Math.max(1-sum*5/value2,0)*330;
+                // let value3=value2/(sum*2)-1;
+                hue=(Math.atan(value2/(sum*5)-0.5)/1.71)*360;
+                // offscreenCtx.fillStyle = `hsl(${hue}, 100%, ${value/2.56}%)`;
+                offscreenCtx.fillStyle = `hsl(${hue}, ${value2/256*60+40}%, ${(Math.min(value1/256,1)**2)*100}%)`;
+                offscreenCtx.fillRect(currentX, y, 3, 1);
+            }
+
+        }
+            // 将离屏canvas绘制到主canvas
+            canvasCtx.drawImage(offscreenCanvas, 0, 0);
+
+            // 绘制播放头
+            canvasCtx.fillStyle = 'white';
+            canvasCtx.fillRect(currentX, 0, 1, canvasHeight);
+
+
+            // 自动滚动到播放头位置
+            // container.scrollLeft = currentX - container.clientWidth / 2;
+
+            // 更新infoDiv
+            const mousetime = (mouseX / pixelsPerSecond);
+            const mouseFreq = (minFreq + (maxFreq - minFreq) * (1 - mouseY / canvasHeight));
+            infoDiv.textContent = `Time: ${mousetime.toFixed(2)}s, Frequency: ${mouseFreq.toFixed(2)}Hz`;
+
+            
+            // 绘制选择标记
+            if (isRangeSelected) {
+                // 绘制区间选择标记
+                canvasCtx.strokeStyle = 'white';
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(selectionStartX, 0);
+                canvasCtx.lineTo(selectionStartX, canvasHeight);
+                canvasCtx.moveTo(selectionEndX, 0);
+                canvasCtx.lineTo(selectionEndX, canvasHeight);
+                canvasCtx.stroke();
+            } else {
+                // 绘制时间点选择标记
+                canvasCtx.strokeStyle = 'white';
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(selectedTime * pixelsPerSecond, 0);
+                canvasCtx.lineTo(selectedTime * pixelsPerSecond, canvasHeight);
+                canvasCtx.stroke();
+            }
+
+            //音高参考
+            const noteLetter="C,C#,D,D#,E,F,F#,G,G#,A,A#,B".split(",")
+            canvasCtx.strokeStyle = 'green';
+            canvasCtx.beginPath();
+            for(let i=36;i<=96;++i){
+                noteName=noteLetter[i%12]+((i/12-1)|0);
+                let freq=440*(2**((i-69)/12));
+                let y=(1-(freq-minFreq)/(maxFreq-minFreq))*canvasHeight;
+                // canvasCtx.strokeText(noteName,i*10,y);
+                canvasCtx.moveTo(0,y);
+                canvasCtx.lineTo(canvasWidth,y);
+            }
+            canvasCtx.strokeStyle="rgba(255,255,255,0.5)";
+            canvasCtx.stroke();
+            canvasCtx.beginPath();
+            canvasCtx.fillStyle="white";
+            for(let i=36;i<=96;++i){
+                noteName=noteLetter[i%12]+((i/12-1)|0);
+                let freq=440*(2**((i-69)/12));
+                if(freq<mouseFreq*(2**(-1/12))||freq>mouseFreq*(2**(1/12)))continue;
+                let y=(1-(freq-minFreq)/(maxFreq-minFreq))*canvasHeight;
+                canvasCtx.fillText(noteName,mouseX+(freq<mouseFreq?5:25),y-2);
+                canvasCtx.moveTo(0,y);
+                canvasCtx.lineTo(canvasWidth,y);
+            }
+            canvasCtx.fillText(`${mouseFreq.toFixed(1)}Hz`,mouseX+40,mouseY);
+            canvasCtx.strokeStyle="rgba(255,255,255,1)";
+            canvasCtx.stroke();
+            canvasCtx.beginPath();
+            for(let i=1;i<=8;++i){
+                noteName=noteLetter[i%12]+((i/12-1)|0);
+                let freq=mouseFreq*i;
+                let y=(1-(freq-minFreq)/(maxFreq-minFreq))*canvasHeight;
+                // canvasCtx.strokeText(noteName,i*10,y);
+                canvasCtx.moveTo(0,y);
+                canvasCtx.lineTo(canvasWidth,y);
+                if(i==1){canvasCtx.strokeStyle="rgba(255,255,0,0.7)";canvasCtx.stroke();canvasCtx.beginPath();}
+            }
+            canvasCtx.strokeStyle="rgba(255,233,0,0.7)";
+            canvasCtx.stroke();
+        }
+        
+        // 鼠标事件处理
+        canvas.addEventListener('mousedown', function(e) {
+            // if (audioElement.paused) {
+            if(!audioElement.paused)audioElement.pause();
+                isDragging = true;
+                const rect = canvas.getBoundingClientRect();
+                selectionStartX = e.clientX - rect.left;
+                selectionEndX = selectionStartX;
+                selectedTime = selectionStartX / pixelsPerSecond;
+                isRangeSelected = false;
+        });
+
+        canvas.addEventListener('mousemove', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+
+            if (isDragging) {
+                selectionEndX = mouseX;
+                isRangeSelected = true;
+            }
+
+            // const mousetime = (mouseX / pixelsPerSecond).toFixed(2);
+            // const mouseFreq = (minFreq + (maxFreq - minFreq) * (1 - mouseY / canvasHeight)).toFixed(2);
+            // infoDiv.textContent = `Time: ${mousetime}s, Frequency: ${mouseFreq}Hz`;
+        });
+
+        canvas.addEventListener('mouseup', function() {
+            if (isDragging) {
+                isDragging = false;
+                if (selectionStartX === selectionEndX) {
+                    isRangeSelected = false;
+                    selectedTime = selectionStartX / pixelsPerSecond;
+                }else{
+                    if(selectionEndX<selectionStartX){
+                        let t1=selectionEndX;
+                        selectionEndX=selectionStartX;
+                        selectionStartX=t1;
+                    }
+                }
+            }
+        });
+
+        // 键盘事件处理
+        let intervalId = null; // 用于存储检测区间结束的定时器ID
+        window.addEventListener("mousedown",function(){audioContext.resume();console.log("for chrome")});
+        canvas.addEventListener('keydown', function(e) {
+            audioContext.resume();
+            if (e.code === 'Space') {
+                e.preventDefault(); // 防止空格键滚动页面
+
+                if (audioElement.paused) {
+                    if (isRangeSelected) {
+                        // 如果有选择区间，从区间开头播放
+                        audioElement.currentTime = selectionStartX / pixelsPerSecond;
+                        audioElement.play();
+
+                        // 设置定时器检测是否到达区间末尾
+                        intervalId = setInterval(() => {
+                            if (audioElement.currentTime >= selectionEndX / pixelsPerSecond) {
+                                audioElement.pause();
+                                clearInterval(intervalId); // 清除定时器
+                            }
+                        }, 10); // 每10ms检测一次
+                    } else {
+                        // 如果没有选择区间，从选择的时间点播放
+                        audioElement.currentTime = selectedTime;
+                        audioElement.play();
+                    }
+                } else {
+                    // 如果音频正在播放，按下空格键暂停
+                    audioElement.pause();
+                }
+            }else if(e.code=="Enter"){
+                if (audioElement.paused) {
+                    // 如果音频是暂停状态
+                    audioElement.play();
+                } else {
+                    // 如果音频正在播放，按下回车暂停
+                    audioElement.pause();
+                    // isRangeSelected=False;
+                    // selectedTime=audioElement.currentTime;
+                }
+                container.scrollLeft = audioElement.currentTime*pixelsPerSecond - container.clientWidth / 2;
+            }
+        });
+
+        // 监听音频暂停事件，确保暂停时清除定时器
+        audioElement.addEventListener('pause', function() {
+            if (intervalId) {
+                clearInterval(intervalId);
+                intervalId = null;
+            }
+        });
+
+        // 使canvas获得焦点
+        canvas.setAttribute('tabindex', '0');
+        canvas.focus();
+
+        // 初始化绘制循环
+        draw();
+    </script>
+</body>
+</html>
