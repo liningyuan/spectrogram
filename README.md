@@ -1,6 +1,9 @@
 # Spectrogram Visualizer
 Visualize spectrogram with interactive playback control and harmonic series indication. A tool designed for converting songs to midi manually and visually.
-Written with deepseek V3.
+Partly written by deepseek V3.
+
+Link: https://liningyuan.github.io/spectrogram/main.html
+Compatible version: https://liningyuan.github.io/spectrogram/compatibler.html
 
 ## Controls
 - Upload an audio file to visualize its spectrogram.
@@ -10,4 +13,4 @@ Written with deepseek V3.
 - Right-click and hold to play a square wave at the frequency corresponding to the mouse's Y-position.
 
 # comment
-With due respect, I disrespect either AudioWorklet or CORS for their joint inconveience.
+With due respect, I sincerely disrespect either AudioWorklet or CORS for their joint inconvenience.
