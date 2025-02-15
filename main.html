@@ -74,7 +74,7 @@
         // 初始化画布
         let canvasWidth = 1000;
         let canvasHeight = 700;
-        let pixelsPerSecond = 100; // 每1秒100像素
+        let pixelsPerSecond = undefined; // 每1秒100像素
         let isInitialized = false;
         let minFreq = 0;
         let maxFreq = 2000;
@@ -87,6 +87,7 @@
         let isRangeSelected = false; // 是否选择了区间
 
         
+        //let updateFPS=400,lasttime=audioContext.currentTime;
         audioContext.audioWorklet.addModule('signal.js').then(() => {
             processorNode = new AudioWorkletNode(audioContext, 'signalsender');
 
@@ -94,6 +95,10 @@
             analyser.connect(audioContext.destination);
             processorNode.port.onmessage = (e) => {
                 drawCurrentFFT();
+                // if(lasttime+1/updateFPS<=audioContext.currentTime){
+                //     lasttime=audioContext.currentTime;
+                //     drawCurrentFFT();
+                // }
             }
         });
 
@@ -114,6 +119,8 @@
             // 初始化画布尺寸
             audioElement.addEventListener('loadedmetadata', function() {
                 const duration = audioElement.duration;
+                pixelsPerSecond=Math.min(100,Math.floor(32000/duration));
+                console.log(pixelsPerSecond,"pixels per second");
                 canvasWidth = Math.ceil(duration * pixelsPerSecond);
                 canvas.width = canvasWidth;
                 canvas.height = canvasHeight;
@@ -121,6 +128,9 @@
                 offscreenCanvas.height = canvasHeight;
                 offscreenCtx.fillStyle = 'rgb(200, 200, 200)';
                 offscreenCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+                imageData = offscreenCtx.createImageData(canvasWidth, canvasHeight); // 预分配像素数据
+                pixels = imageData.data;
+                for(let i1=3;i1<pixels.length;i1+=4)pixels[i1]=128;
                 isInitialized = true;
 
                 // 初始化选择时间点为开头
@@ -139,32 +149,37 @@
             if (isInitialized &&!(audioElement.paused)){
                 // 获取频谱数据
                 analyser.getFloatFrequencyData(dataArray);
-                // dataArray2 = new Uint8Array(analyser.frequencyBinCount);
-                // analyser.getByteFrequencyData(dataArray2);
-                // offscreenCtx.fillStyle = `hsl(0, 100%, 50%)`;
-                // offscreenCtx.fillRect(currentX, 0, 2, canvasHeight);
-
-                let sum=1.0;
-                for(let i=0;i<dataArray.length;++i)sum+=(2**(dataArray[i]/10))*256;
-                sum/=dataArray.length;
-                // 绘制频谱到离屏canvas
-                for (let y = 0; y < canvasHeight; y++) {
-                    const freq = minFreq + (maxFreq - minFreq) * (1 - y / canvasHeight);
-                    const binIndex = Math.floor((freq / (audioContext.sampleRate / 2)) * dataArray.length);
-                    let value = Math.max(dataArray[binIndex],-140);
-                    let value1=(value-(-100))/(-0-(-100))*256;
-                    let value2=(2**(value/10))*256;
-                    let value3 = Math.atan(value2/(sum*5)-0.5)/1.71;
-                    // hue=Math.max(1-sum*5/value2,0)*330;
-                    // let value3=value2/(sum*2)-1;
-                    // hue=(Math.atan(value2/(sum*5)-0.5)/1.71)*256;
-                    // offscreenCtx.fillStyle = `hsl(${hue}, 100%, ${value/2.56}%)`;
-                    // offscreenCtx.fillStyle = `hsl(${hue}, ${value2/256*60+40}%, ${(Math.min(value1/256,1)**2)*100}%)`;
-                    offscreenCtx.fillStyle = `rgb(${value3*256}, ${value2*8},${value1*(value1/256)})`;
-                    offscreenCtx.fillRect(currentX, y, 5, 1);
-                }
+                drawFFTtoCanvas(currentX,dataArray);
+            }
+        }
+        let imageData=offscreenCtx.createImageData(canvasWidth, canvasHeight), pixels = null;
+        let pixelUpdateWidth=6;
+        function drawFFTtoCanvas(currentX,dataArray){
+            currentX=Math.floor(currentX)|0;
+            let sum=1.0;
+            for(let i=0;i<dataArray.length;++i)sum+=(2**(dataArray[i]/10))*256;
+            sum/=dataArray.length;
+            // 绘制频谱到离屏canvas
+            for (let y = 0; y < canvasHeight; y++) {
+                const freq = minFreq + (maxFreq - minFreq) * (1 - y / canvasHeight);
+                const binIndex = Math.floor((freq / (audioContext.sampleRate / 2)) * dataArray.length);
+                let value = Math.max(dataArray[binIndex],-140);
+                let value1=(value-(-100))/(-0-(-100))*256;
+                let value2=(2**(value/10))*256;
+                let value3 = Math.atan(value2/(sum*5)-0.5)/1.71;
+                value1=value1*(value1/256);
+                value2=value2*8;
+                value3=value3*256;
+                const pixelIndex = (y * canvasWidth + currentX) * 4;
+                pixels[pixelIndex] = value3;     // R
+                pixels[pixelIndex + 1] = value2; // G
+                pixels[pixelIndex + 2] = value1; // B
+                pixels[pixelIndex + 3] = 255; // Alpha
             }
             // lastDrawnX = currentX;
+            for(let x=0;x<pixelUpdateWidth;++x){
+                offscreenCtx.putImageData(imageData,x,0, currentX,0, 1, canvasHeight);
+            }
         };
 
         // 更新频率范围
@@ -195,6 +210,7 @@
             const currentX = (currentTime * pixelsPerSecond);
             
             // 将离屏canvas绘制到主canvas
+            // canvasCtx.putImageData(imageData,0,0);
             canvasCtx.drawImage(offscreenCanvas, 0, 0);
 
             // 绘制播放头
